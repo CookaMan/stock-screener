@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Screener</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --line: #d9dde3; --text: #1b1f24; --muted: #68717d;
+    --accent: #1f5fbf; --head: #e9ecf1; --row-alt: #f8f9fb; --hover: #e8f0fd;
+    --good: #0b7a3b; --bad: #c0271d; --warn-bg: #fff4d6; --warn-text: #6b4e00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --panel: #1c2027; --line: #2e343d; --text: #e3e6ea; --muted: #8e98a5;
+      --accent: #6aa5ff; --head: #252a33; --row-alt: #20242c; --hover: #263247;
+      --good: #4cc27d; --bad: #ff7a6e; --warn-bg: #3a3115; --warn-text: #f1d68a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+           padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 16px; margin: 0; }
+  .spacer { flex: 1; }
+  .muted { color: var(--muted); }
+  select, input, button { font: inherit; color: var(--text); background: var(--panel);
+                          border: 1px solid var(--line); border-radius: 4px; padding: 4px 7px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { color: #fff; filter: brightness(1.1); }
+
+  #stale { display: none; padding: 8px 16px; background: var(--warn-bg); color: var(--warn-text);
+           border-bottom: 1px solid var(--line); }
+  #progress { display: none; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #progress .bar { height: 6px; background: var(--head); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+  #progress .bar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+  #filters { background: var(--panel); border-bottom: 1px solid var(--line); }
+  #filters details { border-bottom: 1px solid var(--line); }
+  #filters details:last-child { border-bottom: 0; }
+  #filters summary { padding: 7px 16px; cursor: pointer; font-weight: 600; user-select: none; }
+  #filters summary .n { color: var(--accent); font-weight: 600; margin-left: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 16px;
+          padding: 2px 16px 12px; }
+  .f label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+             letter-spacing: .03em; color: var(--muted); margin-bottom: 3px; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+  .f .pair { display: flex; gap: 5px; }
+  .f input, .f select { width: 100%; min-width: 0; }
+  .f.on label { color: var(--accent); }
+
+  #tabs { display: flex; gap: 4px; padding: 10px 16px 0; flex-wrap: wrap; }
+  #tabs button { border-radius: 4px 4px 0 0; border-bottom: 0; background: var(--head); }
+  #tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; flex-wrap: wrap; }
+
+  .wrap { padding: 0 16px 24px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); }
+  th, td { padding: 4px 8px; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th { position: sticky; top: 0; background: var(--head); text-align: left; font-weight: 600;
+       cursor: pointer; user-select: none; }
+  th:hover { color: var(--accent); }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.sorted { color: var(--accent); }
+  tbody tr:nth-child(even) { background: var(--row-alt); }
+  tbody tr:hover { background: var(--hover); }
+  td.text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  td a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .na { color: var(--muted); }
+  #empty { padding: 40px 16px; text-align: center; color: var(--muted); display: none; }
+  footer { padding: 0 16px 20px; color: var(--muted); font-size: 11px; max-width: 1100px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Stock Screener</h1>
+  <select id="index" title="Stock universe"></select>
+  <span class="muted" id="updated"></span>
+  <span class="spacer"></span>
+  <button id="retry" style="display:none"></button>
+  <button id="refresh" class="primary">Refresh data</button>
+</header>
+
+<div id="stale"></div>
+<div id="progress">
+  <span id="progText"></span>
+  <div class="bar"><div id="progBar"></div></div>
+</div>
+
+<div id="filters"></div>
+
+<div id="tabs"></div>
+<div id="bar">
+  <strong id="count"></strong>
+  <button id="reset">Reset filters</button>
+  <span class="spacer"></span>
+  <button id="prev">&lsaquo; Prev</button>
+  <span id="page" class="muted"></span>
+  <button id="next">Next &rsaquo;</button>
+  <select id="pageSize" title="Rows per page">
+    <option>50</option><option selected>100</option><option>250</option><option value="100000">All</option>
+  </select>
+  <button id="csv">Export CSV</button>
+</div>
+
+<div class="wrap">
+  <table>
+    <thead><tr id="head"></tr></thead>
+    <tbody id="body"></tbody>
+  </table>
+  <div id="empty"></div>
+</div>
+
+<footer>Data from Yahoo Finance (unofficial; may be delayed, incomplete or wrong for individual stocks). Valuation
+ratios and margins are trailing twelve months. P/FCF uses trailing free cash flow and is N/A when it is negative.
+LT debt/equity uses the latest quarterly balance sheet and is N/A when shareholder equity is negative. EPS growth 3Y
+is annualised over the four fiscal years Yahoo publishes; a 5-year figure is not available from this source.
+Analyst rating runs from 1 (strong buy) to 5 (sell). For research only, not investment advice.</footer>
+
+<script>
+// fmt: cap | vol | ratio | pct | price.   tone: "sign" colors negatives red / positives green, "debt" flags leverage.
+const METRICS = [
+  { key: "marketCap",   label: "Market Cap",    group: "Descriptive", fmt: "cap",   unit: "$B" },
+  { key: "price",       label: "Price",         group: "Descriptive", fmt: "price", unit: "$" },
+  { key: "avgVolume",   label: "Avg Volume",    group: "Descriptive", fmt: "vol",   unit: "M shares", tip: "Average daily volume, 3 months" },
+  { key: "relVolume",   label: "Rel Volume",    group: "Descriptive", fmt: "ratio", tip: "Latest volume / average volume" },
+  { key: "divYield",    label: "Dividend",      group: "Descriptive", fmt: "pct",   unit: "%", tip: "Dividend yield" },
+
+  { key: "pe",          label: "P/E",           group: "Valuation", fmt: "ratio", tip: "Price / trailing earnings" },
+  { key: "fwdPe",       label: "Fwd P/E",       group: "Valuation", fmt: "ratio", tip: "Price / next year's estimated earnings" },
+  { key: "peg",         label: "PEG",           group: "Valuation", fmt: "ratio", tip: "P/E / expected earnings growth" },
+  { key: "ps",          label: "P/S",           group: "Valuation", fmt: "ratio", tip: "Price / sales" },
+  { key: "pb",          label: "P/B",           group: "Valuation", fmt: "ratio", tip: "Price / book value" },
+  { key: "pfcf",        label: "P/FCF",         group: "Valuation", fmt: "ratio", tip: "Price / free cash flow" },
+
+  { key: "roe",         label: "ROE",           group: "Financial", fmt: "pct", unit: "%", tone: "sign", tip: "Return on equity" },
+  { key: "roa",         label: "ROA",           group: "Financial", fmt: "pct", unit: "%", tone: "sign", tip: "Return on assets" },
+  { key: "grossMargin", label: "Gross M",       group: "Financial", fmt: "pct", unit: "%", long: "Gross margin" },
+  { key: "operMargin",  label: "Oper M",        group: "Financial", fmt: "pct", unit: "%", tone: "sign", long: "Operating margin" },
+  { key: "netMargin",   label: "Net Margin",    group: "Financial", fmt: "pct", unit: "%", tone: "sign", long: "Net profit margin" },
+  { key: "currentRatio",label: "Curr R",        group: "Financial", fmt: "ratio", long: "Current ratio", tip: "Current assets / current liabilities" },
+  { key: "quickRatio",  label: "Quick R",       group: "Financial", fmt: "ratio", long: "Quick ratio" },
+  { key: "ltDebtEq",    label: "LT Debt/Eq",    group: "Financial", fmt: "ratio", tone: "debt", long: "LT debt / equity" },
+  { key: "debtEq",      label: "Debt/Eq",       group: "Financial", fmt: "ratio", tone: "debt", long: "Total debt / equity" },
+  { key: "payout",      label: "Payout",        group: "Financial", fmt: "pct", unit: "%", long: "Payout ratio", tip: "Dividends / earnings" },
+
+  { key: "epsGrowth3y", label: "EPS 3Y",        group: "Growth & Ownership", fmt: "pct", unit: "%", tone: "sign", long: "EPS growth, 3 years", tip: "Annualised EPS growth over 3 years" },
+  { key: "epsGrowthQ",  label: "EPS Q/Q",       group: "Growth & Ownership", fmt: "pct", unit: "%", tone: "sign", long: "EPS growth, qtr yoy", tip: "Latest quarter EPS vs same quarter last year" },
+  { key: "salesGrowthQ",label: "Sales Q/Q",     group: "Growth & Ownership", fmt: "pct", unit: "%", tone: "sign", long: "Sales growth, qtr yoy", tip: "Latest quarter sales vs same quarter last year" },
+  { key: "insiderOwn",  label: "Insider Own",   group: "Growth & Ownership", fmt: "pct", unit: "%" },
+  { key: "instOwn",     label: "Inst Own",      group: "Growth & Ownership", fmt: "pct", unit: "%", long: "Institutional own" },
+  { key: "shortFloat",  label: "Short Float",   group: "Growth & Ownership", fmt: "pct", unit: "%" },
+  { key: "analystRec",  label: "Recom",         group: "Growth & Ownership", fmt: "ratio", long: "Analyst rating", unit: "1 buy - 5 sell" },
+  { key: "targetUpside",label: "Target",        group: "Growth & Ownership", fmt: "pct", unit: "%", tone: "sign", long: "Upside to price target", tip: "Mean analyst target vs current price" },
+
+  { key: "beta",        label: "Beta",          group: "Technical", fmt: "ratio" },
+  { key: "perf52w",     label: "Perf Year",     group: "Technical", fmt: "pct", unit: "%", tone: "sign", long: "52-week performance" },
+  { key: "from52wHigh", label: "52W High",      group: "Technical", fmt: "pct", unit: "%", tone: "sign", long: "From 52-week high" },
+  { key: "from52wLow",  label: "52W Low",       group: "Technical", fmt: "pct", unit: "%", tone: "sign", long: "From 52-week low" },
+  { key: "sma50",       label: "SMA50",         group: "Technical", fmt: "pct", unit: "%", tone: "sign", long: "Price vs 50-day avg" },
+  { key: "sma200",      label: "SMA200",        group: "Technical", fmt: "pct", unit: "%", tone: "sign", long: "Price vs 200-day avg" },
+];
+const M = Object.fromEntries(METRICS.map(m => [m.key, m]));
+const GROUPS = ["Descriptive", "Valuation", "Financial", "Growth & Ownership", "Technical"];
+const TEXT = { ticker: "Ticker", name: "Company", sector: "Sector", industry: "Industry" };
+const VIEWS = {
+  "Overview":  ["ticker", "name", "sector", "industry", "marketCap", "pe", "pb", "ps", "netMargin", "ltDebtEq", "price", "avgVolume"],
+  "Valuation": ["ticker", "name", "sector", "marketCap", "pe", "fwdPe", "peg", "ps", "pb", "pfcf", "divYield", "price"],
+  "Financial": ["ticker", "name", "sector", "marketCap", "roe", "roa", "grossMargin", "operMargin", "netMargin", "currentRatio", "quickRatio", "ltDebtEq", "debtEq", "payout"],
+  "Growth & Ownership": ["ticker", "name", "sector", "marketCap", "epsGrowth3y", "epsGrowthQ", "salesGrowthQ", "insiderOwn", "instOwn", "shortFloat", "analystRec", "targetUpside"],
+  "Technical": ["ticker", "name", "sector", "marketCap", "price", "perf52w", "from52wHigh", "from52wLow", "sma50", "sma200", "beta", "avgVolume", "relVolume"],
+};
+// Filter inputs are typed in display units; these convert them to stored units.
+const INPUT_SCALE = { cap: 1e9, vol: 1e6, pct: 0.01 };
+
+const $ = id => document.getElementById(id);
+const state = { rows: [], view: [], sortKey: "marketCap", sortDir: -1, page: 0, indexes: [], tab: "Overview" };
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const FMT = {
+  cap:   v => v >= 1e12 ? (v / 1e12).toFixed(2) + "T" : v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : (v / 1e6).toFixed(0) + "M",
+  vol:   v => v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : (v / 1e3).toFixed(0) + "K",
+  ratio: v => v.toFixed(2),
+  pct:   v => (v * 100).toFixed(1) + "%",
+  price: v => v.toFixed(2),
+};
+function tone(m, v) {
+  if (m.tone === "sign") return v < 0 ? "bad" : v > 0 ? "good" : "";
+  if (m.tone === "debt") return v > 2 ? "bad" : v <= 0.5 ? "good" : "";
+  return "";
+}
+
+// ---------- filter panel
+
+function buildFilters() {
+  const pair = m => `<div class="f" title="${esc(m.tip || m.long || m.label)}">
+      <label>${esc(m.long || m.label)}${m.unit ? " (" + esc(m.unit) + ")" : ""}</label>
+      <div class="pair">
+        <input data-f="${m.key}" data-b="min" type="number" step="any" placeholder="Min">
+        <input data-f="${m.key}" data-b="max" type="number" step="any" placeholder="Max">
+      </div></div>`;
+  const descriptive = `
+    <div class="f"><label>Search</label><input id="q" type="search" placeholder="Ticker or company"></div>
+    <div class="f"><label>Sector</label><select id="sector"><option value="">Any</option></select></div>
+    <div class="f"><label>Industry</label><select id="industry"><option value="">Any</option></select></div>
+    <div class="f"><label>Market cap size</label>
+      <select id="capBucket">
+        <option value="">Any</option>
+        <option value="mega">Mega ($200B and up)</option>
+        <option value="large">Large ($10B to $200B)</option>
+        <option value="mid">Mid ($2B to $10B)</option>
+        <option value="small">Small (under $2B)</option>
+      </select></div>`;
+  $("filters").innerHTML = GROUPS.map((g, i) => `
+    <details data-group="${esc(g)}" ${i < 3 ? "open" : ""}>
+      <summary>${esc(g)}<span class="n"></span></summary>
+      <div class="grid">${i === 0 ? descriptive : ""}${METRICS.filter(m => m.group === g).map(pair).join("")}</div>
+    </details>`).join("");
+}
+
+function buildTabs() {
+  $("tabs").innerHTML = Object.keys(VIEWS).map(v =>
+    `<button data-tab="${esc(v)}" class="${v === state.tab ? "on" : ""}">${esc(v)}</button>`).join("");
+}
+
+function markActiveFilters() {
+  document.querySelectorAll("#filters details").forEach(d => {
+    let n = 0;
+    d.querySelectorAll(".f").forEach(f => {
+      const on = [...f.querySelectorAll("input, select")].some(e => e.value !== "");
+      f.classList.toggle("on", on);
+      if (on) n++;
+    });
+    d.querySelector(".n").textContent = n ? `${n} active` : "";
+  });
+}
+
+// ---------- rendering
+
+function applyFilters() {
+  const q = $("q").value.trim().toLowerCase();
+  const sector = $("sector").value, industry = $("industry").value, bucket = $("capBucket").value;
+  const bounds = [];
+  document.querySelectorAll("#filters input[data-f]").forEach(el => {
+    if (el.value === "" || isNaN(+el.value)) return;
+    const m = M[el.dataset.f];
+    bounds.push({ key: m.key, min: el.dataset.b === "min", v: +el.value * (INPUT_SCALE[m.fmt] || 1) });
+  });
+
+  const rows = state.rows.filter(r => {
+    if (q && !r.ticker.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q)) return false;
+    if (sector && r.sector !== sector) return false;
+    if (industry && r.industry !== industry) return false;
+    if (bucket) {
+      const m = r.marketCap;
+      if (m == null) return false;
+      if (bucket === "mega"  && m < 200e9) return false;
+      if (bucket === "large" && (m < 10e9 || m >= 200e9)) return false;
+      if (bucket === "mid"   && (m < 2e9 || m >= 10e9)) return false;
+      if (bucket === "small" && m >= 2e9) return false;
+    }
+    for (const b of bounds) {
+      const v = r[b.key];
+      if (v == null) return false;            // a filtered metric must be present
+      if (b.min ? v < b.v : v > b.v) return false;
+    }
+    return true;
+  });
+
+  const k = state.sortKey, d = state.sortDir, isNum = !!M[k];
+  rows.sort((a, b) => {
+    const x = a[k], y = b[k];
+    const xn = x == null || x === "", yn = y == null || y === "";
+    if (xn || yn) return xn - yn || a.ticker.localeCompare(b.ticker);   // N/A always last
+    return (isNum ? x - y : String(x).localeCompare(String(y))) * d || a.ticker.localeCompare(b.ticker);
+  });
+  state.view = rows;
+}
+
+function render() {
+  applyFilters();
+  markActiveFilters();
+  const cols = VIEWS[state.tab];
+
+  $("head").innerHTML = cols.map(k => {
+    const m = M[k], on = k === state.sortKey;
+    const arrow = on ? (state.sortDir > 0 ? " ▲" : " ▼") : "";
+    const tip = m ? (m.tip || m.long || m.label) : TEXT[k];
+    return `<th class="${m ? "num" : ""} ${on ? "sorted" : ""}" data-key="${k}" title="${esc(tip)}">${esc(m ? m.label : TEXT[k])}${arrow}</th>`;
+  }).join("");
+
+  const size = +$("pageSize").value;
+  const pages = Math.max(1, Math.ceil(state.view.length / size));
+  state.page = Math.max(0, Math.min(state.page, pages - 1));
+  const slice = state.view.slice(state.page * size, (state.page + 1) * size);
+
+  $("body").innerHTML = slice.map(r => "<tr>" + cols.map(k => {
+    const m = M[k], v = r[k];
+    if (k === "ticker")
+      return `<td><a href="https://finance.yahoo.com/quote/${encodeURIComponent(r.ticker)}" target="_blank" rel="noopener">${esc(r.ticker)}</a></td>`;
+    if (!m) return `<td class="text" title="${esc(v)}">${esc(v)}</td>`;
+    if (v == null) {
+      const why = (k === "ltDebtEq" || k === "pb") && r.negEquity ? ' title="Negative shareholder equity"' : "";
+      return `<td class="num na"${why}>N/A</td>`;
+    }
+    return `<td class="num ${tone(m, v)}">${FMT[m.fmt](v)}</td>`;
+  }).join("") + "</tr>").join("");
+
+  $("count").textContent = `${state.view.length} of ${state.rows.length} stocks`;
+  $("page").textContent = `Page ${state.page + 1} of ${pages}`;
+  $("prev").disabled = state.page === 0;
+  $("next").disabled = state.page >= pages - 1;
+  const empty = $("empty");
+  empty.style.display = state.view.length ? "none" : "block";
+  empty.textContent = state.rows.length ? "No stocks match these filters."
+                                        : "No data loaded yet for this selection.";
+}
+
+// ---------- data
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+function fillSelect(id, values) {
+  const sel = $(id), keep = sel.value;
+  sel.innerHTML = `<option value="">Any</option>` + values.map(s => `<option>${esc(s)}</option>`).join("");
+  sel.value = values.includes(keep) ? keep : "";
+}
+
+async function loadIndexes() {
+  state.indexes = await api("/api/indexes");
+  const sel = $("index"), current = sel.value || "sp500";
+  sel.innerHTML = state.indexes.map(i =>
+    `<option value="${i.key}">${esc(i.label)}${i.loaded ? "" : " (not loaded)"}</option>`).join("")
+    + `<option value="all">All loaded</option>`;
+  sel.value = current;
+}
+
+async function loadStocks() {
+  const index = $("index").value;
+  const data = await api("/api/stocks?index=" + index);
+  state.rows = data.rows;
+  fillSelect("sector", [...new Set(state.rows.map(r => r.sector).filter(Boolean))].sort());
+  fillSelect("industry", [...new Set(state.rows.map(r => r.industry).filter(Boolean))].sort());
+  $("updated").textContent = data.updated ? "Updated " + new Date(data.updated).toLocaleString() : "";
+
+  const retry = $("retry");
+  if (index !== "all" && data.failed.length) {
+    retry.style.display = "";
+    retry.textContent = `Retry ${data.failed.length} failed`;
+    retry.title = data.failed.join(", ");
+  } else retry.style.display = "none";
+  $("refresh").disabled = index === "all";
+
+  const stale = $("stale");
+  const old = (data.outdated || []).map(k => (state.indexes.find(i => i.key === k) || {}).label || k);
+  stale.style.display = old.length ? "block" : "none";
+  stale.textContent = old.length
+    ? `${old.join(", ")} was downloaded before the newer columns were added, so those show N/A. Select it and click Refresh data to update.`
+    : "";
+  render();
+}
+
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  let lastReload = 0;
+  try {
+    for (;;) {
+      const s = await api("/api/status");
+      const box = $("progress");
+      if (!s.running) { box.style.display = "none"; break; }
+      box.style.display = "block";
+      const label = (state.indexes.find(i => i.key === s.index) || {}).label || s.index;
+      const paused = s.message.startsWith("Yahoo rate limit") || s.message.startsWith("Retrying");
+      $("progText").textContent = s.total
+        ? `Loading ${label}: ${s.done} / ${s.total}` + (s.failed ? ` (${s.failed} failed)` : "") + (paused ? ` - ${s.message}` : "")
+        : `Loading ${label}: ${s.message}...`;
+      $("progBar").style.width = s.total ? (100 * s.done / s.total) + "%" : "0";
+      $("refresh").disabled = true; $("retry").disabled = true;
+      const shown = $("index").value;
+      if (s.done - lastReload >= 25 && (s.index === shown || shown === "all")) { lastReload = s.done; await loadStocks(); }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  } finally {
+    polling = false;
+    $("retry").disabled = false;
+    await loadIndexes();
+    await loadStocks();
+  }
+}
+
+async function refresh(missingOnly) {
+  const index = $("index").value;
+  if (index === "all") return;
+  await api(`/api/refresh?index=${index}${missingOnly ? "&missing=1" : ""}`, { method: "POST" });
+  poll();
+}
+
+// ---------- events
+
+$("head").addEventListener("click", e => {
+  const th = e.target.closest("th"); if (!th) return;
+  const key = th.dataset.key;
+  if (key === state.sortKey) state.sortDir *= -1;
+  else { state.sortKey = key; state.sortDir = M[key] ? -1 : 1; }
+  state.page = 0; render();
+});
+$("tabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.tab = b.dataset.tab; buildTabs(); render();
+});
+$("filters").addEventListener("input", () => { state.page = 0; render(); });
+$("pageSize").addEventListener("change", () => { state.page = 0; render(); });
+$("prev").addEventListener("click", () => { state.page--; render(); });
+$("next").addEventListener("click", () => { state.page++; render(); });
+$("reset").addEventListener("click", () => {
+  document.querySelectorAll("#filters input").forEach(i => i.value = "");
+  document.querySelectorAll("#filters select").forEach(s => s.value = "");
+  state.page = 0; render();
+});
+$("refresh").addEventListener("click", () => refresh(false));
+$("retry").addEventListener("click", () => refresh(true));
+$("index").addEventListener("change", async () => {
+  state.page = 0;
+  await loadStocks();
+  const meta = state.indexes.find(i => i.key === $("index").value);
+  const s = await api("/api/status");
+  if (meta && !meta.loaded && !s.running &&
+      confirm(`${meta.label} has not been loaded yet. Download it from Yahoo Finance now? This can take several minutes.`))
+    refresh(false);
+});
+$("csv").addEventListener("click", () => {
+  const cell = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const value = (r, m) => r[m.key] == null ? "" : m.fmt === "pct" ? +(r[m.key] * 100).toFixed(2) : +r[m.key].toFixed(4);
+  const header = Object.values(TEXT).concat(METRICS.map(m => (m.long || m.label) + (m.fmt === "pct" ? " %" : "")));
+  const lines = [header.map(cell).join(",")].concat(state.view.map(r =>
+    Object.keys(TEXT).map(k => cell(r[k])).concat(METRICS.map(m => value(r, m))).join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = "screener.csv"; a.click(); URL.revokeObjectURL(a.href);
+});
+
+(async function init() {
+  buildFilters();
+  buildTabs();
+  await loadIndexes();
+  await loadStocks();
+  const s = await api("/api/status");
+  if (s.running) poll();
+  else if (!state.indexes.find(i => i.key === "sp500").loaded) refresh(false);   // first run
+})();
+</script>
+</body>
+</html>
